@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="MortonPlazmer/MortonPlazmer.csproj">
+    <Deploy />
+  </Project>
+</Solution>

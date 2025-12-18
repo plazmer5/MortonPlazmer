@@ -1,26 +1,25 @@
-﻿#nullable disable
+#nullable disable
 using Android.App;
 using Android.Content;
 using Android.OS;
-using Android.Provider;
 using Android.Webkit;
 using Android.Widget;
-
-using AndroidUri = Android.Net.Uri;
+using System.Diagnostics;
 using AndroidEnvironment = Android.OS.Environment;
+using AndroidUri = Android.Net.Uri;
 
 namespace MortonPlazmer.Platforms.Android
 {
     public class UniversalDownloadListener : Java.Lang.Object, IDownloadListener
     {
-        private readonly Activity _activity;
+        private readonly MainActivity _activity;
         private string _pendingDownloadUrl;
         private string _pendingDownloadUserAgent;
         private string _pendingDownloadMimeType;
 
         private const int REQUEST_CODE_CREATE_FILE = 1001;
 
-        public UniversalDownloadListener(Activity activity)
+        public UniversalDownloadListener(MainActivity activity)
         {
             _activity = activity ?? throw new ArgumentNullException(nameof(activity));
         }

@@ -1,8 +1,8 @@
-﻿using MortonPlazmer.Controls;
+using MortonPlazmer.Controls;
 using Microsoft.Extensions.Logging;
 #if ANDROID
 using MortonPlazmer.Platforms.Android;
-#elif IOS
+#elif IOS  || MACCATALYST
     using MortonPlazmer.Platforms.iOS;
 #elif WINDOWS
 using Windows.System;
@@ -27,7 +27,7 @@ namespace MortonPlazmer
             builder.ConfigureMauiHandlers(handlers =>
             {
 #if ANDROID
-    handlers.AddHandler(typeof(CustomWebView), typeof(CustomWebViewHandler000));
+    handlers.AddHandler(typeof(CustomWebView), typeof(CustomWebViewHandler));
 #elif IOS
                 handlers.AddHandler(typeof(CustomWebView), typeof(CustomWebViewHandler));
 #elif WINDOWS        

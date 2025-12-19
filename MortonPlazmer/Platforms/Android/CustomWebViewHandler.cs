@@ -44,6 +44,8 @@ namespace MortonPlazmer.Platforms.Android
             s.UseWideViewPort = true;
             s.LoadWithOverviewMode = true;
 
+            s.BuiltInZoomControls = true;
+
             wv.AddJavascriptInterface(
                 new BlobJsBridge(wv.Context),
                 "AndroidBlob");
@@ -56,27 +58,78 @@ namespace MortonPlazmer.Platforms.Android
     }
 
     // =====================================================
-    // WebViewClient — blob:
+    // WebViewClient — WIX FIX + CONFIRMATION DIALOG
     // =====================================================
     internal class BlobAwareClient : WebViewClient
     {
         private readonly AndroidWebView _wv;
+        private readonly Context _ctx;
 
-        public BlobAwareClient(AndroidWebView wv) => _wv = wv;
+        public BlobAwareClient(AndroidWebView wv)
+        {
+            _wv = wv;
+            _ctx = wv.Context;
+        }
 
         public override bool ShouldOverrideUrlLoading(
-            AndroidWebView view,
-            IWebResourceRequest request)
+    AndroidWebView view,
+    IWebResourceRequest request)
         {
             var url = request?.Url?.ToString();
-            if (url != null && url.StartsWith("blob:"))
+            if (string.IsNullOrEmpty(url))
+                return false;
+
+            bool isFile =
+                url.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".xls", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("static.wixstatic.com");
+
+            // 1️⃣ blob
+            if (url.StartsWith("blob:", StringComparison.OrdinalIgnoreCase))
             {
-                InjectBlobJS(url);
+                ShowDownloadConfirmDialog(url, () =>
+                {
+                    InjectBlobJS(url);
+                });
                 return true;
             }
+
+            // 2️⃣ обычный файл (PDF, DOCX и т.п.)
+            if (isFile)
+            {
+                ShowDownloadConfirmDialog(url, () =>
+                {
+                    view.LoadUrl(url); // ✅ запускаем DownloadListener
+                });
+                return true;
+            }
+
             return false;
         }
 
+
+        // -------------------------------------------------
+        // Диалог подтверждения
+        // -------------------------------------------------
+        private void ShowDownloadConfirmDialog(string url, Action onConfirm)
+        {
+            string file = System.IO.Path.GetFileName(url);
+
+            new AlertDialog.Builder(_ctx)
+                .SetTitle("Скачать файл?")
+                .SetMessage($"Имя: {file}\nФайл будет сохранён в папку Загрузки.")
+                .SetCancelable(true)
+                .SetNegativeButton("Отмена", (s, e) => { })
+                .SetPositiveButton("Скачать", (s, e) => onConfirm?.Invoke())
+                .Show();
+        }
+
+        // -------------------------------------------------
+        // Запуск blob-скачивания
+        // -------------------------------------------------
         private void InjectBlobJS(string blobUrl)
         {
             string js = $@"
@@ -163,88 +216,104 @@ namespace MortonPlazmer.Platforms.Android
     {
         private readonly Context _ctx;
 
-        public DownloadListener(Context ctx) => _ctx = ctx;
-
-        public void OnDownloadStart(
-            string url, string ua,
-            string cd, string mime, long len)
+        public DownloadListener(Context ctx)
         {
-            if (string.IsNullOrEmpty(url) || url.StartsWith("blob:"))
-                return;
+            _ctx = ctx;
+        }
 
-            string name = URLUtil.GuessFileName(url, cd, mime);
-
-            if (len > 0 && !StorageCheck.HasSpace(_ctx, len))
+        public void OnDownloadStart(string url, string ua, string cd, string mime, long len)
+        {
+            try
             {
-                Toast.MakeText(
-                    _ctx,
-                    "Недостаточно места",
-                    ToastLength.Long).Show();
-                return;
+                if (string.IsNullOrEmpty(mime))
+                    mime = "application/octet-stream";
+
+                if (len <= 0)
+                    len = 1;
+
+                string name = URLUtil.GuessFileName(url, cd, mime);
+
+                var req = new DownloadManager.Request(AndroidUri.Parse(url));
+                req.AddRequestHeader("User-Agent", ua);
+                req.SetMimeType(mime);
+                req.SetTitle(name);
+                req.SetNotificationVisibility(DownloadVisibility.VisibleNotifyCompleted);
+                req.SetDestinationInExternalFilesDir(_ctx, AndroidEnvironment.DirectoryDownloads, name);
+
+                var dm = (DownloadManager)_ctx.GetSystemService(Context.DownloadService);
+                long id = dm.Enqueue(req);
+
+                DownloadReceiver.Register(_ctx.ApplicationContext, id, name, mime);
+            }
+            catch (Exception ex)
+            {
+                Toast.MakeText(_ctx, "Ошибка загрузки: " + ex.Message, ToastLength.Long).Show();
+                DL.E(ex.ToString());
+            }
+        }
+
+        // =====================================================
+        // Download completion
+        // =====================================================
+        [BroadcastReceiver(Enabled = true, Exported = false)]
+        internal class DownloadReceiver : BroadcastReceiver
+        {
+            private static long _id;
+            private static string _name;
+            private static string _mime;
+
+            public static void Register(
+    Context ctx,
+    long id,
+    string name,
+    string mime)
+            {
+                _id = id;
+                _name = name;
+                _mime = mime;
+
+                var filter =
+                    new IntentFilter(
+                        DownloadManager.ActionDownloadComplete);
+
+                var receiver = new DownloadReceiver();
+
+                if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu)
+                {
+                    ctx.RegisterReceiver(
+                        receiver,
+                        filter,
+                        ReceiverFlags.NotExported);
+                }
+                else
+                {
+                    ctx.RegisterReceiver(
+                        receiver,
+                        filter);
+                }
+
+                DL.I($"Receiver registered for download id={id}");
             }
 
-            var req = new DownloadManager.Request(AndroidUri.Parse(url));
-            req.AddRequestHeader("User-Agent", ua);
-            req.SetTitle(name);
-            req.SetNotificationVisibility(
-                DownloadVisibility.VisibleNotifyCompleted);
 
-            req.SetDestinationInExternalFilesDir(
-                _ctx,
-                AndroidEnvironment.DirectoryDownloads,
-                name);
+            public override void OnReceive(Context ctx, Intent intent)
+            {
+                long id =
+                    intent.GetLongExtra(
+                        DownloadManager.ExtraDownloadId, -1);
 
-            var dm =
-                (DownloadManager)_ctx.GetSystemService(
-                    Context.DownloadService);
+                if (id != _id)
+                    return;
 
-            long id = dm.Enqueue(req);
+                string temp =
+                    Path.Combine(
+                        ctx.GetExternalFilesDir(
+                            AndroidEnvironment.DirectoryDownloads).AbsolutePath,
+                        _name);
 
-            DownloadReceiver.Register(
-                _ctx.ApplicationContext, id, name, mime);
-        }
-    }
-
-    // =====================================================
-    // Download completion
-    // =====================================================
-    [BroadcastReceiver(Enabled = true, Exported = false)]
-    internal class DownloadReceiver : BroadcastReceiver
-    {
-        private static long _id;
-        private static string _name;
-        private static string _mime;
-
-        public static void Register(
-            Context ctx, long id, string name, string mime)
-        {
-            _id = id;
-            _name = name;
-            _mime = mime;
-
-            ctx.RegisterReceiver(
-                new DownloadReceiver(),
-                new IntentFilter(
-                    DownloadManager.ActionDownloadComplete));
-        }
-
-        public override void OnReceive(Context ctx, Intent intent)
-        {
-            long id =
-                intent.GetLongExtra(
-                    DownloadManager.ExtraDownloadId, -1);
-
-            if (id != _id)
-                return;
-
-            string temp =
-                Path.Combine(
-                    ctx.GetExternalFilesDir(
-                        AndroidEnvironment.DirectoryDownloads).AbsolutePath,
-                    _name);
-
-            DownloadFinalizer.Finalize(
-                ctx, temp, _name, _mime);
+                DownloadFinalizer.Finalize(
+                    ctx, temp, _name, _mime);
+            }
         }
     }
 
@@ -269,14 +338,10 @@ namespace MortonPlazmer.Platforms.Android
                 var v = new ContentValues();
                 v.Put(MediaStore.IMediaColumns.DisplayName, fileName);
                 v.Put(MediaStore.IMediaColumns.MimeType, mime);
-                v.Put(
-                    MediaStore.IMediaColumns.RelativePath,
-                    AndroidEnvironment.DirectoryDownloads);
+                v.Put(MediaStore.IMediaColumns.RelativePath, AndroidEnvironment.DirectoryDownloads);
                 v.Put(MediaStore.IMediaColumns.IsPending, 1);
 
-                var uri =
-                    r.Insert(
-                        MediaStore.Downloads.ExternalContentUri, v);
+                var uri = r.Insert(MediaStore.Downloads.ExternalContentUri, v);
 
                 using (var i = File.OpenRead(tempPath))
                 using (var o = r.OpenOutputStream(uri))
@@ -291,9 +356,8 @@ namespace MortonPlazmer.Platforms.Android
             }
             else
             {
-                var dir =
-                    AndroidEnvironment.GetExternalStoragePublicDirectory(
-                        AndroidEnvironment.DirectoryDownloads);
+                var dir = AndroidEnvironment.GetExternalStoragePublicDirectory(
+                    AndroidEnvironment.DirectoryDownloads);
 
                 if (!dir.Exists())
                     dir.Mkdirs();
@@ -302,25 +366,17 @@ namespace MortonPlazmer.Platforms.Android
                 File.Copy(tempPath, dst, true);
                 File.Delete(tempPath);
 
-                OpenFile(
-                    ctx,
-                    AndroidUri.FromFile(new Java.IO.File(dst)),
-                    mime);
+                OpenFile(ctx, AndroidUri.FromFile(new Java.IO.File(dst)), mime);
             }
         }
 
-        private static void OpenFile(
-            Context ctx,
-            AndroidUri uri,
-            string mime)
+        private static void OpenFile(Context ctx, AndroidUri uri, string mime)
         {
             try
             {
                 var i = new Intent(Intent.ActionView);
                 i.SetDataAndType(uri, mime);
-                i.SetFlags(
-                    ActivityFlags.NewTask |
-                    ActivityFlags.GrantReadUriPermission);
+                i.SetFlags(ActivityFlags.NewTask | ActivityFlags.GrantReadUriPermission);
                 ctx.StartActivity(i);
             }
             catch { }
@@ -336,10 +392,7 @@ namespace MortonPlazmer.Platforms.Android
         {
             try
             {
-                var dir =
-                    ctx.GetExternalFilesDir(
-                        AndroidEnvironment.DirectoryDownloads);
-
+                var dir = ctx.GetExternalFilesDir(AndroidEnvironment.DirectoryDownloads);
                 var stat = new StatFs(dir.AbsolutePath);
                 return stat.AvailableBytes > needBytes;
             }

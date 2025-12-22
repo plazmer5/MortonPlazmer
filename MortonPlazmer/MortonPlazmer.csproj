@@ -45,21 +45,21 @@
 		<AppxSymbolPackageEnabled>True</AppxSymbolPackageEnabled>
 		<GenerateTestArtifacts>True</GenerateTestArtifacts>
 		<HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
-		<AndroidSigningKeyStore>keystore36.keystore</AndroidSigningKeyStore>
+		<AndroidSigningKeyStore>ForGitHubKey.keystore</AndroidSigningKeyStore>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-android|AnyCPU'">
 	  <AndroidKeyStore>True</AndroidKeyStore>
-	  <AndroidSigningStorePass>keystore36</AndroidSigningStorePass>
-	  <AndroidSigningKeyAlias>keystore36</AndroidSigningKeyAlias>
-	  <AndroidSigningKeyPass>keystore36</AndroidSigningKeyPass>
+	  <AndroidSigningStorePass>ForGitHubKey</AndroidSigningStorePass>
+	  <AndroidSigningKeyAlias>ForGitHubKey</AndroidSigningKeyAlias>
+	  <AndroidSigningKeyPass>ForGitHubKey</AndroidSigningKeyPass>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-android|AnyCPU'">
 	  <AndroidKeyStore>True</AndroidKeyStore>
-	  <AndroidSigningStorePass>keystore36</AndroidSigningStorePass>
-	  <AndroidSigningKeyAlias>keystore36</AndroidSigningKeyAlias>
-	  <AndroidSigningKeyPass>keystore36</AndroidSigningKeyPass>
+	  <AndroidSigningStorePass>ForGitHubKey</AndroidSigningStorePass>
+	  <AndroidSigningKeyAlias>ForGitHubKey</AndroidSigningKeyAlias>
+	  <AndroidSigningKeyPass>ForGitHubKey</AndroidSigningKeyPass>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -87,4 +87,5 @@
 	</ItemGroup>
 
 </Project>
+
 

@@ -2,22 +2,18 @@
 
 using Android.App;
 using Android.Content;
-using Android.Database;
 using Android.OS;
 using Android.Provider;
 using Android.Webkit;
 using Android.Widget;
 using Java.Interop;
 using Microsoft.Maui.Handlers;
-using MortonPlazmer.Controls;
-using System;
-using System.IO;
 
 using AndroidEnvironment = Android.OS.Environment;
 using AndroidUtil = Android.Util;
 using AndroidWebView = Android.Webkit.WebView;
 using AndroidUri = Android.Net.Uri;
-
+using AndroidGraphics = Android.Graphics;
 namespace MortonPlazmer.Platforms.Android
 {
     internal static class DL
@@ -43,9 +39,11 @@ namespace MortonPlazmer.Platforms.Android
             s.AllowContentAccess = true;
             s.UseWideViewPort = true;
             s.LoadWithOverviewMode = true;
-
             s.BuiltInZoomControls = true;
-
+            s.DisplayZoomControls = false;
+            wv.SetBackgroundColor(
+                AndroidGraphics.Color.Black
+            );
             wv.AddJavascriptInterface(
                 new BlobJsBridge(wv.Context),
                 "AndroidBlob");
@@ -405,3 +403,4 @@ namespace MortonPlazmer.Platforms.Android
 }
 
 #nullable restore
+

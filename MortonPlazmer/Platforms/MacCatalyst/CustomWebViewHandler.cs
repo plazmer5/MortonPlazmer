@@ -1,3 +1,5 @@
+#nullable disable
+
 using Microsoft.Maui.Handlers;
 using WebKit;
 using UIKit;
@@ -320,3 +322,4 @@ namespace MortonPlazmer.Platforms.iOS
     }
 }
 
+#nullable restore

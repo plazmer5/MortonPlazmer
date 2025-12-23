@@ -1,4 +1,4 @@
-﻿#nullable disable
+#nullable disable
 
 using Microsoft.Maui.Handlers;
 using Microsoft.UI.Xaml.Controls;
@@ -15,26 +15,56 @@ namespace MortonPlazmer.Platforms.Windows
 {
     public class CustomWebViewHandler : WebViewHandler
     {
+        private static readonly string CacheDir =
+           Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "WebView2Cache");
         protected override async void ConnectHandler(WebView2 platformView)
         {
             base.ConnectHandler(platformView);
 
+            // Устанавливаем переменную окружения до инициализации
+            Environment.SetEnvironmentVariable(
+                "WEBVIEW2_USER_DATA_FOLDER",
+                CacheDir
+            );
+
+            // Инициализируем WebView2
             await platformView.EnsureCoreWebView2Async();
 
-            // 🔴 1. Запрещаем открытие новых окон
-            platformView.CoreWebView2.NewWindowRequested +=
-                (s, e) =>
-                {
-                    // Открываем ссылку в ТОМ ЖЕ WebView
-                    s.Navigate(e.Uri);
-                    e.Handled = true;
-                };
+            // Очистка старого кэша
+            Task.Run(() => CleanOldCache(7));
 
-            // 🔴 2. Перехват скачивания
+            // Запрещаем открытие новых окон
+            platformView.CoreWebView2.NewWindowRequested += (s, e) =>
+            {
+                s.Navigate(e.Uri);
+                e.Handled = true;
+            };
+
+            // Перехват скачивания
             platformView.CoreWebView2.DownloadStarting += OnDownloadStarting;
         }
 
+        private async void CleanOldCache(int days = 7)
+        {
+            try
+            {
+                if (!Directory.Exists(CacheDir))
+                    Directory.CreateDirectory(CacheDir);
 
+                var threshold = DateTime.UtcNow.AddDays(-days);
+                foreach (var file in Directory.GetFiles(CacheDir))
+                {
+                    try
+                    {
+                        if (File.GetLastAccessTimeUtc(file) < threshold)
+                            File.Delete(file);
+                    }
+                    catch { /* игнорируем ошибки удаления */ }
+                }
+            }
+            catch { }
+        }
         private async void OnDownloadStarting(
             CoreWebView2 sender,
             CoreWebView2DownloadStartingEventArgs e)
@@ -126,3 +156,4 @@ namespace MortonPlazmer.Platforms.Windows
 }
 
 #nullable restore
+

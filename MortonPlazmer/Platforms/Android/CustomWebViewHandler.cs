@@ -2,19 +2,22 @@
 
 using Android.App;
 using Android.Content;
+using Android.Net;
 using Android.OS;
 using Android.Provider;
 using Android.Webkit;
-using Android.Widget;
 using Java.Interop;
+
 using Microsoft.Maui.Handlers;
 using System.Collections.Concurrent;
-
+using System.IO;
+using System.Net.Http;
 using AndroidEnvironment = Android.OS.Environment;
+using AndroidGraphics = Android.Graphics;
+using AndroidUri = Android.Net.Uri;
 using AndroidUtil = Android.Util;
 using AndroidWebView = Android.Webkit.WebView;
-using AndroidUri = Android.Net.Uri;
-using AndroidGraphics = Android.Graphics;
+using AndroidApp = Android.App.Application;
 
 namespace MortonPlazmer.Platforms.Android
 {
@@ -49,32 +52,34 @@ namespace MortonPlazmer.Platforms.Android
                 {
                     Description = "Загрузка файлов"
                 };
-
-                var nm =
-                    (NotificationManager)ctx.GetSystemService(
-                        Context.NotificationService);
-
+                var nm = (NotificationManager)ctx.GetSystemService(Context.NotificationService);
                 nm.CreateNotificationChannel(channel);
             }
 
             _initialized = true;
         }
 
+        private static Notification.Builder CreateBuilder(Context ctx)
+        {
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+                return new Notification.Builder(ctx, CHANNEL_ID);
+
+            return new Notification.Builder(ctx);
+        }
+
+        private static int _nid;
+
         public static int ShowProgress(Context ctx, string name)
         {
             Init(ctx);
-
-            int id = name.GetHashCode();
-
-            var n = new Notification.Builder(ctx, CHANNEL_ID)
+            int id = Interlocked.Increment(ref _nid);
+            var b = CreateBuilder(ctx)
                 .SetContentTitle("Загрузка файла")
                 .SetContentText(name)
                 .SetSmallIcon(Resource.Drawable.material_ic_menu_arrow_down_black_24dp)
                 .SetOngoing(true)
-                .SetProgress(0, 0, true)
-                .Build();
-
-            NotificationManager.FromContext(ctx).Notify(id, n);
+                .SetProgress(0, 0, true);
+            NotificationManager.FromContext(ctx).Notify(id, b.Build());
             return id;
         }
 
@@ -84,37 +89,33 @@ namespace MortonPlazmer.Platforms.Android
             i.SetData(uri);
             i.SetFlags(ActivityFlags.NewTask | ActivityFlags.GrantReadUriPermission);
 
-            var pi = PendingIntent.GetActivity(
-                ctx, 0, i,
-                PendingIntentFlags.UpdateCurrent |
-                PendingIntentFlags.Immutable);
+            var flags = PendingIntentFlags.UpdateCurrent;
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.M)
+                flags |= PendingIntentFlags.Immutable;
 
-            var n = new Notification.Builder(ctx, CHANNEL_ID)
+            var pi = PendingIntent.GetActivity(ctx, 0, i, flags);
+            var b = CreateBuilder(ctx)
                 .SetContentTitle("Загрузка завершена")
                 .SetContentText(name)
                 .SetSmallIcon(Resource.Drawable.material_ic_menu_arrow_down_black_24dp)
                 .SetContentIntent(pi)
-                .SetAutoCancel(true)
-                .Build();
-
-            NotificationManager.FromContext(ctx).Notify(id, n);
+                .SetAutoCancel(true);
+            NotificationManager.FromContext(ctx).Notify(id, b.Build());
         }
 
         public static void Error(Context ctx, int id, string msg)
         {
-            var n = new Notification.Builder(ctx, CHANNEL_ID)
+            var b = CreateBuilder(ctx)
                 .SetContentTitle("Ошибка загрузки")
                 .SetContentText(msg)
                 .SetSmallIcon(Resource.Drawable.material_ic_menu_arrow_down_black_24dp)
-                .SetAutoCancel(true)
-                .Build();
-
-            NotificationManager.FromContext(ctx).Notify(id, n);
+                .SetAutoCancel(true);
+            NotificationManager.FromContext(ctx).Notify(id, b.Build());
         }
     }
 
     // =====================================================
-    // HANDLER
+    // CUSTOM WEBVIEW HANDLER
     // =====================================================
     public class CustomWebViewHandler : WebViewHandler
     {
@@ -125,12 +126,25 @@ namespace MortonPlazmer.Platforms.Android
             var s = wv.Settings;
             s.JavaScriptEnabled = true;
             s.DomStorageEnabled = true;
+            s.DatabaseEnabled = true;
             s.AllowFileAccess = true;
             s.AllowContentAccess = true;
             s.UseWideViewPort = true;
             s.LoadWithOverviewMode = true;
             s.BuiltInZoomControls = true;
             s.DisplayZoomControls = false;
+
+            // Кэш
+            bool isLineageOS = Build.Manufacturer?.Equals("lineage", System.StringComparison.OrdinalIgnoreCase) == true
+                               || Build.Display?.ToLowerInvariant().Contains("lineage") == true;
+
+            if (Build.VERSION.SdkInt < BuildVersionCodes.R || isLineageOS)
+            {
+                s.SetAppCacheEnabled(true);
+                s.SetAppCachePath(wv.Context.CacheDir.AbsolutePath);
+            }
+
+            s.CacheMode = CacheModes.CacheElseNetwork; // оффлайн поддержка
 
             if (VirtualView is Controls.CustomWebView cv &&
                 !string.IsNullOrEmpty(cv.UserAgent))
@@ -139,138 +153,128 @@ namespace MortonPlazmer.Platforms.Android
             }
 
             wv.SetBackgroundColor(AndroidGraphics.Color.Black);
+            wv.AddJavascriptInterface(new BlobJsBridge(wv.Context), "AndroidBlob");
 
-            wv.AddJavascriptInterface(
-                new BlobJsBridge(wv.Context),
-                "AndroidBlob");
-
-            wv.SetWebViewClient(new BlobAwareClient(wv));
+            // WebViewClient с оффлайн-поддержкой
+            wv.SetWebViewClient(new OfflineWebViewClient(wv));
             wv.SetDownloadListener(new QueueDownloadListener(wv.Context));
 
-            DL.I("CustomWebViewHandler connected");
+            // авто-очистка старого кэша (файлы старше 7 дней)
+            LocalCache.CleanOldCache(7);
+
+            DL.I("CustomWebViewHandler connected with offline cache enabled");
         }
     }
 
     // =====================================================
-    // WEBVIEW CLIENT
+    // OFFLINE WEBVIEW CLIENT
     // =====================================================
-    internal class BlobAwareClient : WebViewClient
+    internal class OfflineWebViewClient : WebViewClient
     {
         private readonly AndroidWebView _wv;
         private readonly Context _ctx;
 
-        public BlobAwareClient(AndroidWebView wv)
+        public OfflineWebViewClient(AndroidWebView wv)
         {
             _wv = wv;
             _ctx = wv.Context;
         }
 
-        public override bool ShouldOverrideUrlLoading(
-            AndroidWebView view,
-            IWebResourceRequest request)
+        public override void OnReceivedError(AndroidWebView view, IWebResourceRequest request, WebResourceError error)
         {
-            var url = request?.Url?.ToString();
-            if (string.IsNullOrEmpty(url))
-                return false;
+            view.Settings.CacheMode = IsNetworkAvailable() ? CacheModes.Default : CacheModes.CacheElseNetwork;
+            base.OnReceivedError(view, request, error);
+        }
 
-            bool isFile =
-                url.StartsWith("blob:") ||
-                url.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ||
-                url.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) ||
-                url.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
-                url.EndsWith(".xls", StringComparison.OrdinalIgnoreCase) ||
-                url.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("static.wixstatic.com");
-
-            if (!isFile)
-                return false;
-
-            ShowConfirm(url, () =>
+        public override WebResourceResponse ShouldInterceptRequest(AndroidWebView view, IWebResourceRequest request)
+        {
+            var url = request.Url.ToString();
+            if (LocalCache.TryGet(url) is (var stream, var mime))
             {
-                if (url.StartsWith("blob:"))
-                    InjectBlobJS(url);
-                else
-                    view.LoadUrl(url);
-            });
+                return new WebResourceResponse(mime, "UTF-8", stream);
+            }
 
-            return true;
+            return base.ShouldInterceptRequest(view, request);
         }
 
-        private void ShowConfirm(string url, Action ok)
+        private bool IsNetworkAvailable()
         {
-            string name = System.IO.Path.GetFileName(url);
-
-            new AlertDialog.Builder(_ctx)
-                .SetTitle("Скачать файл?")
-                .SetMessage($"Имя: {name}\nФайл будет сохранён в Загрузки.")
-                .SetPositiveButton("Скачать", (_, __) => ok())
-                .SetNegativeButton("Отмена", (_, __) => { })
-                .Show();
-        }
-
-        private void InjectBlobJS(string blobUrl)
-        {
-            string js = $@"
-(async function() {{
-  try {{
-    const r = await fetch('{blobUrl}');
-    const b = await r.blob();
-    const reader = new FileReader();
-    reader.onloadend = function() {{
-      AndroidBlob.save(
-        reader.result.split(',')[1],
-        b.type || 'application/octet-stream',
-        b.size
-      );
-    }};
-    reader.readAsDataURL(b);
-  }} catch(e) {{
-    AndroidBlob.error(e.toString());
-  }}
-}})();";
-
-            _wv.Post(() => _wv.EvaluateJavascript(js, null));
+            var cm = (ConnectivityManager)_ctx.GetSystemService(Context.ConnectivityService);
+            var network = cm.ActiveNetworkInfo;
+            return network != null && network.IsConnected;
         }
     }
 
     // =====================================================
-    // QUEUE DOWNLOAD LISTENER
+    // LOCAL CACHE HELPER
     // =====================================================
-    internal class QueueDownloadListener :
-        Java.Lang.Object, IDownloadListener
+    internal static class LocalCache
     {
-        private readonly Context _ctx;
+        private static readonly string CacheDir = Path.Combine(AndroidApp.Context.CacheDir.AbsolutePath, "webview");
 
-        public QueueDownloadListener(Context ctx) => _ctx = ctx;
-
-        public void OnDownloadStart(
-            string url, string ua, string cd, string mime, long len)
+        public static (Stream Stream, string MimeType)? TryGet(string url)
         {
-            if (string.IsNullOrEmpty(mime))
-                mime = "application/octet-stream";
-
-            string name = URLUtil.GuessFileName(url, cd, mime);
-
-            DownloadQueue.Enqueue(async () =>
+            try
             {
-                int nid = DownloadNotifications.ShowProgress(_ctx, name);
-                try
-                {
-                    var uri = await MediaStoreWriter.WriteFromUrl(
-                        _ctx, url, ua, name, mime);
+                var file = Path.Combine(CacheDir, System.Uri.EscapeDataString(url));
+                if (!File.Exists(file)) return null;
 
-                    DownloadNotifications.Complete(_ctx, nid, name, uri);
-                }
-                catch (Exception ex)
+                File.SetLastAccessTimeUtc(file, System.DateTime.UtcNow);
+
+                string mime = MimeTypeMap.Singleton.GetMimeTypeFromExtension(Path.GetExtension(file)) ?? "application/octet-stream";
+                return (File.OpenRead(file), mime);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static void Save(string url, byte[] data)
+        {
+            try
+            {
+                if (!Directory.Exists(CacheDir))
+                    Directory.CreateDirectory(CacheDir);
+
+                var file = Path.Combine(CacheDir, System.Uri.EscapeDataString(url));
+                File.WriteAllBytes(file, data);
+                File.SetLastAccessTimeUtc(file, System.DateTime.UtcNow);
+            }
+            catch { DL.E("CleanOldCache job failed."); }
+        }
+        public static void CleanOldCache(int days = 7)
+        {
+            try
+            {
+                if (!Directory.Exists(CacheDir))
                 {
-                    DownloadNotifications.Error(_ctx, nid, ex.Message);
+                    Directory.CreateDirectory(CacheDir); // создаём папку, если её нет
+                    return; // папка новая, нечего чистить
                 }
-            });
+
+                var files = Directory.GetFiles(CacheDir);
+                var threshold = DateTime.UtcNow.AddDays(-days);
+
+                foreach (var file in files)
+                {
+                    try
+                    {
+                        if (File.GetLastAccessTimeUtc(file) < threshold)
+                            File.Delete(file);
+                    }
+                    catch { /* Игнорируем ошибки удаления */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                DL.E("CleanOldCache job failed: " + ex);
+            }
         }
     }
 
     // =====================================================
-    // JS → ANDROID (BLOB)
+    // BLOB JS BRIDGE
     // =====================================================
     internal class BlobJsBridge : Java.Lang.Object
     {
@@ -283,16 +287,13 @@ namespace MortonPlazmer.Platforms.Android
             DownloadQueue.Enqueue(async () =>
             {
                 int nid = DownloadNotifications.ShowProgress(_ctx, "blob");
-
                 try
                 {
-                    var bytes = Convert.FromBase64String(base64);
-                    var uri = await MediaStoreWriter.WriteBytes(
-                        _ctx, bytes, mime);
-
+                    var bytes = System.Convert.FromBase64String(base64);
+                    var uri = await MediaStoreWriter.WriteBytes(_ctx, bytes, mime);
                     DownloadNotifications.Complete(_ctx, nid, "blob", uri);
                 }
-                catch (Exception ex)
+                catch (System.Exception ex)
                 {
                     DownloadNotifications.Error(_ctx, nid, ex.Message);
                 }
@@ -311,10 +312,10 @@ namespace MortonPlazmer.Platforms.Android
     // =====================================================
     internal static class DownloadQueue
     {
-        private static readonly Queue<Func<Task>> _queue = new();
+        private static readonly Queue<System.Func<System.Threading.Tasks.Task>> _queue = new();
         private static bool _running;
 
-        public static void Enqueue(Func<Task> job)
+        public static void Enqueue(System.Func<System.Threading.Tasks.Task> job)
         {
             lock (_queue)
             {
@@ -323,14 +324,14 @@ namespace MortonPlazmer.Platforms.Android
                 _running = true;
             }
 
-            _ = Task.Run(Process);
+            _ = System.Threading.Tasks.Task.Run(Process);
         }
 
-        private static async Task Process()
+        private static async System.Threading.Tasks.Task Process()
         {
             while (true)
             {
-                Func<Task> job;
+                System.Func<System.Threading.Tasks.Task> job;
 
                 lock (_queue)
                 {
@@ -342,7 +343,14 @@ namespace MortonPlazmer.Platforms.Android
                     job = _queue.Dequeue();
                 }
 
-                await job();
+                try
+                {
+                    await job();
+                }
+                catch (System.Exception ex)
+                {
+                    DL.E("DownloadQueue job failed: " + ex);
+                }
             }
         }
     }
@@ -352,7 +360,7 @@ namespace MortonPlazmer.Platforms.Android
     // =====================================================
     internal static class MediaStoreWriter
     {
-        public static async Task<AndroidUri> WriteFromUrl(
+        public static async System.Threading.Tasks.Task<AndroidUri> WriteFromUrl(
             Context ctx,
             string url,
             string ua,
@@ -361,43 +369,83 @@ namespace MortonPlazmer.Platforms.Android
         {
             using var client = new HttpClient();
             client.DefaultRequestHeaders.UserAgent.ParseAdd(ua);
-
             var data = await client.GetByteArrayAsync(url);
+
+            LocalCache.Save(url, data);
+
             return await WriteBytes(ctx, data, mime, name);
         }
 
-        public static async Task<AndroidUri> WriteBytes(
+        public static async System.Threading.Tasks.Task<AndroidUri> WriteBytes(
             Context ctx,
             byte[] data,
             string mime,
             string fileName = null)
         {
-            string ext =
-                MimeTypeMap.Singleton.GetExtensionFromMimeType(mime) ?? "bin";
+            string ext = MimeTypeMap.Singleton.GetExtensionFromMimeType(mime) ?? "bin";
+            fileName ??= $"file_{System.DateTime.Now:yyyyMMdd_HHmmss}.{ext}";
 
-            fileName ??=
-                $"file_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}";
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
+            {
+                var r = ctx.ContentResolver;
+                var v = new ContentValues();
+                v.Put(MediaStore.IMediaColumns.DisplayName, fileName);
+                v.Put(MediaStore.IMediaColumns.MimeType, mime);
+                v.Put(MediaStore.IMediaColumns.RelativePath, AndroidEnvironment.DirectoryDownloads);
+                v.Put(MediaStore.IMediaColumns.IsPending, 1);
 
-            var r = ctx.ContentResolver;
+                var uri = r.Insert(MediaStore.Downloads.ExternalContentUri, v);
+                using (var o = r.OpenOutputStream(uri))
+                    await o.WriteAsync(data, 0, data.Length);
 
-            var v = new ContentValues();
-            v.Put(MediaStore.IMediaColumns.DisplayName, fileName);
-            v.Put(MediaStore.IMediaColumns.MimeType, mime);
-            v.Put(MediaStore.IMediaColumns.RelativePath,
-                AndroidEnvironment.DirectoryDownloads);
-            v.Put(MediaStore.IMediaColumns.IsPending, 1);
+                var u = new ContentValues();
+                u.Put(MediaStore.IMediaColumns.IsPending, 0);
+                r.Update(uri, u, null, null);
+                return uri;
+            }
+            else
+            {
+                var dir = AndroidEnvironment.GetExternalStoragePublicDirectory(AndroidEnvironment.DirectoryDownloads);
+                if (!dir.Exists()) dir.Mkdirs();
 
-            var uri =
-                r.Insert(MediaStore.Downloads.ExternalContentUri, v);
+                var file = new Java.IO.File(dir, fileName);
+                using (var fs = new FileStream(file.AbsolutePath, FileMode.Create))
+                    await fs.WriteAsync(data, 0, data.Length);
 
-            using (var o = r.OpenOutputStream(uri))
-                await o.WriteAsync(data, 0, data.Length);
+                return AndroidUri.FromFile(file);
+            }
+        }
+    }
 
-            var u = new ContentValues();
-            u.Put(MediaStore.IMediaColumns.IsPending, 0);
-            r.Update(uri, u, null, null);
+    // =====================================================
+    // DOWNLOAD LISTENER
+    // =====================================================
+    internal class QueueDownloadListener : Java.Lang.Object, IDownloadListener
+    {
+        private readonly Context _ctx;
 
-            return uri;
+        public QueueDownloadListener(Context ctx) => _ctx = ctx;
+
+        public void OnDownloadStart(string url, string ua, string cd, string mime, long len)
+        {
+            if (string.IsNullOrEmpty(mime))
+                mime = "application/octet-stream";
+
+            string name = URLUtil.GuessFileName(url, cd, mime);
+
+            DownloadQueue.Enqueue(async () =>
+            {
+                int nid = DownloadNotifications.ShowProgress(_ctx, name);
+                try
+                {
+                    var uri = await MediaStoreWriter.WriteFromUrl(_ctx, url, ua, name, mime);
+                    DownloadNotifications.Complete(_ctx, nid, name, uri);
+                }
+                catch (System.Exception ex)
+                {
+                    DownloadNotifications.Error(_ctx, nid, ex.Message);
+                }
+            });
         }
     }
 }

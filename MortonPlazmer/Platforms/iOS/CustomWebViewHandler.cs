@@ -1,4 +1,6 @@
-﻿using Microsoft.Maui.Handlers;
+#nullable disable
+
+using Microsoft.Maui.Handlers;
 using WebKit;
 using UIKit;
 using Foundation;
@@ -9,11 +11,10 @@ using System.Net.Http;
 
 namespace MortonPlazmer.Platforms.iOS
 {
-    // =====================================================
-    // MAUI WebView Handler (ТОЛЬКО создание WKWebView)
-    // =====================================================
     public class CustomWebViewHandler : WebViewHandler
     {
+        private const int CacheDays = 7;
+
         protected override WKWebView CreatePlatformView()
         {
             var pagePreferences = new WKWebpagePreferences
@@ -36,6 +37,7 @@ namespace MortonPlazmer.Platforms.iOS
         {
             base.ConnectHandler(nativeView);
 
+            // Настройки скролла и масштабирования
             nativeView.ScrollView.BouncesZoom = true;
             nativeView.ScrollView.MaximumZoomScale = 5f;
             nativeView.ScrollView.MinimumZoomScale = 1f;
@@ -43,37 +45,49 @@ namespace MortonPlazmer.Platforms.iOS
 
             nativeView.AllowsBackForwardNavigationGestures = true;
 
-            nativeView.NavigationDelegate =
-                new IOSWebViewNavigationDelegate(nativeView);
-
+            // Navigation Delegate
+            nativeView.NavigationDelegate = new IOSWebViewNavigationDelegate(nativeView);
             nativeView.UIDelegate = new WKUIDelegate();
+
+            // Очистка старого кэша асинхронно
+            IOSCacheHelper.CleanOldCache(CacheDays);
         }
     }
 
-    // =====================================================
-    // Navigation + Download logic
-    // =====================================================
+    internal static class IOSCacheHelper
+    {
+        public static void CleanOldCache(int days = 7)
+        {
+            var threshold = DateTime.UtcNow.AddDays(-days);
+            var dataTypes = WKWebsiteDataStore.AllWebsiteDataTypes;
+
+            WKWebsiteDataStore.DefaultDataStore.FetchDataRecordsOfTypes(dataTypes, (records) =>
+            {
+                if (records == null) return;
+
+                foreach (WKWebsiteDataRecord record in records)
+                {
+                    // Здесь можно фильтровать вручную по дате последнего доступа
+                    WKWebsiteDataStore.DefaultDataStore.RemoveDataOfTypes(record.DataTypes, new WKWebsiteDataRecord[] { record }, () =>
+                    {
+                        Console.WriteLine($"Кэш удалён: {record.DisplayName}");
+                    });
+                }
+            });
+        }
+    }
+
     internal class IOSWebViewNavigationDelegate : WKNavigationDelegate
     {
         private readonly WKWebView _webView;
-
-        private readonly string[] _downloadableExt =
-        {
-            ".pdf", ".zip", ".apk", ".doc", ".docx", ".xls", ".xlsx"
-        };
+        private readonly string[] _downloadableExt = { ".pdf", ".zip", ".apk", ".doc", ".docx", ".xls", ".xlsx" };
 
         public IOSWebViewNavigationDelegate(WKWebView webView)
         {
             _webView = webView;
         }
 
-        // -------------------------------------------------
-        // Navigation decision
-        // -------------------------------------------------
-        public override void DecidePolicy(
-            WKWebView webView,
-            WKNavigationAction navigationAction,
-            Action<WKNavigationActionPolicy> decisionHandler)
+        public override void DecidePolicy(WKWebView webView, WKNavigationAction navigationAction, Action<WKNavigationActionPolicy> decisionHandler)
         {
             var url = navigationAction?.Request?.Url?.AbsoluteString;
 
@@ -83,11 +97,8 @@ namespace MortonPlazmer.Platforms.iOS
                 return;
             }
 
-            bool isBlob =
-                url.StartsWith("blob:", StringComparison.OrdinalIgnoreCase);
-
-            bool isFile =
-                IsDownloadable(url);
+            bool isBlob = url.StartsWith("blob:", StringComparison.OrdinalIgnoreCase);
+            bool isFile = IsDownloadable(url);
 
             if (isBlob || isFile)
             {
@@ -114,9 +125,6 @@ namespace MortonPlazmer.Platforms.iOS
             return false;
         }
 
-        // -------------------------------------------------
-        // Dialog
-        // -------------------------------------------------
         private void ShowDownloadDialog(string url, Action confirmed)
         {
             string fileName = Path.GetFileName(url) ?? "file";
@@ -126,17 +134,8 @@ namespace MortonPlazmer.Platforms.iOS
                 $"Имя: {fileName}",
                 UIAlertControllerStyle.Alert);
 
-            alert.AddAction(
-                UIAlertAction.Create(
-                    "Отмена",
-                    UIAlertActionStyle.Cancel,
-                    null));
-
-            alert.AddAction(
-                UIAlertAction.Create(
-                    "Скачать",
-                    UIAlertActionStyle.Default,
-                    _ => confirmed?.Invoke()));
+            alert.AddAction(UIAlertAction.Create("Отмена", UIAlertActionStyle.Cancel, null));
+            alert.AddAction(UIAlertAction.Create("Скачать", UIAlertActionStyle.Default, _ => confirmed?.Invoke()));
 
             UIApplication.SharedApplication
                 .KeyWindow?
@@ -150,9 +149,6 @@ namespace MortonPlazmer.Platforms.iOS
                 });
         }
 
-        // -------------------------------------------------
-        // Direct download (URL)
-        // -------------------------------------------------
         private async void DownloadFile(string url)
         {
             try
@@ -160,14 +156,8 @@ namespace MortonPlazmer.Platforms.iOS
                 using var client = new HttpClient();
                 var bytes = await client.GetByteArrayAsync(url);
 
-                string name =
-                    Path.GetFileName(url) ??
-                    $"file_{DateTime.Now:yyyyMMdd_HHmmss}";
-
-                SaveAndPreview(
-                    bytes,
-                    name,
-                    GetMime(name));
+                string name = Path.GetFileName(url) ?? $"file_{DateTime.Now:yyyyMMdd_HHmmss}";
+                SaveAndPreview(bytes, name, GetMime(name));
             }
             catch (Exception ex)
             {
@@ -175,9 +165,6 @@ namespace MortonPlazmer.Platforms.iOS
             }
         }
 
-        // -------------------------------------------------
-        // Blob handling
-        // -------------------------------------------------
         private async void HandleBlob(string blobUrl)
         {
             try
@@ -194,9 +181,7 @@ namespace MortonPlazmer.Platforms.iOS
                     }})();
                 ";
 
-                var result =
-                    await _webView.EvaluateJavaScriptAsync(js);
-
+                var result = await _webView.EvaluateJavaScriptAsync(js);
                 if (result is not NSString ns)
                 {
                     ShowError("Ошибка чтения blob");
@@ -205,7 +190,6 @@ namespace MortonPlazmer.Platforms.iOS
 
                 string data = ns.ToString();
                 int comma = data.IndexOf(',');
-
                 if (comma < 0)
                 {
                     ShowError("Некорректные blob данные");
@@ -214,14 +198,10 @@ namespace MortonPlazmer.Platforms.iOS
 
                 string base64 = data[(comma + 1)..];
                 byte[] bytes = Convert.FromBase64String(base64);
-
                 string mime = ExtractMime(data);
                 string ext = GetExtension(mime);
 
-                SaveAndPreview(
-                    bytes,
-                    $"blob_{DateTime.Now:yyyyMMdd_HHmmss}{ext}",
-                    mime);
+                SaveAndPreview(bytes, $"blob_{DateTime.Now:yyyyMMdd_HHmmss}{ext}", mime);
             }
             catch (Exception ex)
             {
@@ -229,28 +209,18 @@ namespace MortonPlazmer.Platforms.iOS
             }
         }
 
-        // -------------------------------------------------
-        // Save + preview
-        // -------------------------------------------------
         private void SaveAndPreview(byte[] bytes, string name, string mime)
         {
             try
             {
-                string dir =
-                    Path.Combine(
-                        Environment.GetFolderPath(
-                            Environment.SpecialFolder.MyDocuments),
-                        "..", "Library", "Downloads");
-
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "..", "Library", "Downloads");
                 Directory.CreateDirectory(dir);
 
                 string path = Path.Combine(dir, name);
                 File.WriteAllBytes(path, bytes);
 
                 var url = NSUrl.FromFilename(path);
-                var controller =
-                    UIDocumentInteractionController.FromUrl(url);
-
+                var controller = UIDocumentInteractionController.FromUrl(url);
                 controller.Uti = mime;
                 controller.PresentPreview(true);
             }
@@ -260,9 +230,6 @@ namespace MortonPlazmer.Platforms.iOS
             }
         }
 
-        // -------------------------------------------------
-        // Helpers
-        // -------------------------------------------------
         private string ExtractMime(string dataUrl)
         {
             if (dataUrl.StartsWith("data:"))
@@ -274,43 +241,32 @@ namespace MortonPlazmer.Platforms.iOS
             return "application/octet-stream";
         }
 
-        private string GetExtension(string mime) =>
-            mime switch
-            {
-                "application/pdf" => ".pdf",
-                "application/zip" => ".zip",
-                "application/msword" => ".doc",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => ".docx",
-                "application/vnd.ms-excel" => ".xls",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => ".xlsx",
-                _ => ".bin"
-            };
+        private string GetExtension(string mime) => mime switch
+        {
+            "application/pdf" => ".pdf",
+            "application/zip" => ".zip",
+            "application/msword" => ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => ".docx",
+            "application/vnd.ms-excel" => ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => ".xlsx",
+            _ => ".bin"
+        };
 
-        private string GetMime(string file) =>
-            Path.GetExtension(file).ToLower() switch
-            {
-                ".pdf" => "application/pdf",
-                ".zip" => "application/zip",
-                ".doc" => "application/msword",
-                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".xls" => "application/vnd.ms-excel",
-                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                _ => "application/octet-stream"
-            };
+        private string GetMime(string file) => Path.GetExtension(file).ToLower() switch
+        {
+            ".pdf" => "application/pdf",
+            ".zip" => "application/zip",
+            ".doc" => "application/msword",
+            ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xls" => "application/vnd.ms-excel",
+            ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            _ => "application/octet-stream"
+        };
 
         private void ShowError(string msg)
         {
-            var alert =
-                UIAlertController.Create(
-                    "Ошибка",
-                    msg ?? "Неизвестная ошибка",
-                    UIAlertControllerStyle.Alert);
-
-            alert.AddAction(
-                UIAlertAction.Create(
-                    "OK",
-                    UIAlertActionStyle.Default,
-                    null));
+            var alert = UIAlertController.Create("Ошибка", msg ?? "Неизвестная ошибка", UIAlertControllerStyle.Alert);
+            alert.AddAction(UIAlertAction.Create("OK", UIAlertActionStyle.Default, null));
 
             UIApplication.SharedApplication
                 .KeyWindow?
@@ -319,3 +275,5 @@ namespace MortonPlazmer.Platforms.iOS
         }
     }
 }
+
+#nullable restore

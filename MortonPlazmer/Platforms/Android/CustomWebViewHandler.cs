@@ -136,7 +136,7 @@ namespace MortonPlazmer.Platforms.Android
 
             // Кэш
             bool isLineageOS = Build.Manufacturer?.Equals("lineage", System.StringComparison.OrdinalIgnoreCase) == true
-                               || Build.Display?.ToLowerInvariant().Contains("lineage") == true;
+                               || Build.Display?.ToLowerInvariant().Contains("lineage", StringComparison.InvariantCultureIgnoreCase) == true;
 
             if (Build.VERSION.SdkInt < BuildVersionCodes.R || isLineageOS)
             {
@@ -169,16 +169,10 @@ namespace MortonPlazmer.Platforms.Android
     // =====================================================
     // OFFLINE WEBVIEW CLIENT
     // =====================================================
-    internal class OfflineWebViewClient : WebViewClient
+    internal class OfflineWebViewClient(AndroidWebView wv) : WebViewClient
     {
-        private readonly AndroidWebView _wv;
-        private readonly Context _ctx;
-
-        public OfflineWebViewClient(AndroidWebView wv)
-        {
-            _wv = wv;
-            _ctx = wv.Context;
-        }
+        private readonly AndroidWebView _wv = wv;
+        private readonly Context _ctx = wv.Context;
 
         public override void OnReceivedError(AndroidWebView view, IWebResourceRequest request, WebResourceError error)
         {
@@ -276,13 +270,12 @@ namespace MortonPlazmer.Platforms.Android
     // =====================================================
     // BLOB JS BRIDGE
     // =====================================================
-    internal class BlobJsBridge : Java.Lang.Object
+    internal class BlobJsBridge(Context ctx) : Java.Lang.Object
     {
-        private readonly Context _ctx;
-        public BlobJsBridge(Context ctx) => _ctx = ctx;
+        private readonly Context _ctx = ctx;
 
         [JavascriptInterface, Export("save")]
-        public void Save(string base64, string mime, long size)
+        public void Save(string base64, string mime)
         {
             DownloadQueue.Enqueue(async () =>
             {
@@ -301,7 +294,7 @@ namespace MortonPlazmer.Platforms.Android
         }
 
         [JavascriptInterface, Export("error")]
-        public void Error(string msg)
+        public static void Error(string msg)
         {
             DL.E("Blob JS error: " + msg);
         }
@@ -396,7 +389,7 @@ namespace MortonPlazmer.Platforms.Android
 
                 var uri = r.Insert(MediaStore.Downloads.ExternalContentUri, v);
                 using (var o = r.OpenOutputStream(uri))
-                    await o.WriteAsync(data, 0, data.Length);
+                    await o.WriteAsync(data);
 
                 var u = new ContentValues();
                 u.Put(MediaStore.IMediaColumns.IsPending, 0);
@@ -410,7 +403,7 @@ namespace MortonPlazmer.Platforms.Android
 
                 var file = new Java.IO.File(dir, fileName);
                 using (var fs = new FileStream(file.AbsolutePath, FileMode.Create))
-                    await fs.WriteAsync(data, 0, data.Length);
+                    await fs.WriteAsync(data);
 
                 return AndroidUri.FromFile(file);
             }
@@ -420,11 +413,9 @@ namespace MortonPlazmer.Platforms.Android
     // =====================================================
     // DOWNLOAD LISTENER
     // =====================================================
-    internal class QueueDownloadListener : Java.Lang.Object, IDownloadListener
+    internal class QueueDownloadListener(Context ctx) : Java.Lang.Object, IDownloadListener
     {
-        private readonly Context _ctx;
-
-        public QueueDownloadListener(Context ctx) => _ctx = ctx;
+        private readonly Context _ctx = ctx;
 
         public void OnDownloadStart(string url, string ua, string cd, string mime, long len)
         {

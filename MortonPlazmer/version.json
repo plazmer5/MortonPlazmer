@@ -1,0 +1,8 @@
+{
+  "version": "2.2.1",
+  "forceUpdate": true,
+  "message": "Доступно обновление приложения",
+
+  "androidUrl": "https://github.com/plazmer5/MortonPlazmer/releases/download/2.1.1/AndroidMortonPlazmer.apk",
+  "windowsUrl": "https://github.com/plazmer5/MortonPlazmer/releases/download/2.1.1/MortonPlazmer_2.1.1.0_x64.msix"
+}

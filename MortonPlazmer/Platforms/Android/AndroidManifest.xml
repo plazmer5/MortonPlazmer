@@ -6,22 +6,34 @@
 	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 	<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 	<uses-permission android:name="android.permission.INSTALL_PACKAGES" />
-	<uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
 	<uses-permission android:name="android.permission.MANAGE_DEVICE_POLICY_INSTALL_UNKNOWN_SOURCES" />
 	<uses-permission android:name="android.permission.MANAGE_WIFI_INTERFACES" />
 	<uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
+	<uses-permission android:name="android.permission.DELETE_CACHE_FILES" />
+	<uses-permission android:name="android.permission.DELETE_PACKAGES" />
+	<uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
 	<queries>
 		<intent>
 			<action android:name="android.intent.action.VIEW" />
-			<data android:mimeType="application/vnd.android.package-archive" />
+			 <data android:mimeType="*/*" />
 		</intent>
 	</queries>
-	<application android:allowBackup="true" android:supportsRtl="true" android:icon="@mipmap/appicon">
+	<application android:usesCleartextTraffic="true" android:allowBackup="true" android:supportsRtl="true" android:icon="@mipmap/appicon">
 		<!-- FileProvider для доступа к APK -->
-		<provider android:name="androidx.core.content.FileProvider" android:authorities="mortonplazmer.mortonplazmer.fileprovider" android:exported="false" android:grantUriPermissions="true">
-			<meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
-		</provider>
+		
+
+  <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="mortonplazmer.mortonplazmer.fileprovider"
+        android:exported="false"
+        android:grantUriPermissions="true">
+
+        <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+    </provider>
+
+
 	</application>
 </manifest>

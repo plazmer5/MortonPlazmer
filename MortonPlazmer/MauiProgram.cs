@@ -1,4 +1,4 @@
-using MortonPlazmer.Controls;
+﻿using MortonPlazmer.Controls;
 using Microsoft.Extensions.Logging;
 #if ANDROID
 using MortonPlazmer.Platforms.Android;

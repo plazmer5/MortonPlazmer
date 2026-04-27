@@ -9,10 +9,15 @@ public static class ApkInstallPermissionService
     public static bool HasInstallPermission()
     {
 #if ANDROID
-        if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
-        {
-            return Android.App.Application.Context.PackageManager.CanRequestPackageInstalls();
-        }
+    if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+    {
+        var context = Android.App.Application.Context;
+
+        var pm = context.PackageManager
+            ?? throw new InvalidOperationException("PackageManager is null");
+
+        return pm.CanRequestPackageInstalls();
+    }
 #endif
         return true;
     }

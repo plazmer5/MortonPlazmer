@@ -22,7 +22,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using AndroidEnvironment = Android.OS.Environment;
-using AndroidFileProvider = AndroidX.Core.Content.FileProvider;
 using AndroidResource = Android.Resource;
 using AndroidUri = Android.Net.Uri;
 using AndroidUtil = Android.Util;
@@ -30,16 +29,16 @@ using AndroidWebView = Android.Webkit.WebView;
 using AndroidWidget = Android.Widget;
 using JavaIO = Java.IO;
 using AndroidNet = Android.Net;
-using AFileProvider = AndroidX.Core.Content.FileProvider;
+using AndroidGraphics = Android.Graphics;
 
 namespace MortonPlazmer.Platforms.Android
 {
     // =====================================================
     // LOG
     // =====================================================
-    internal static class DL
+    internal static class CustomWebViewHandlerLog
     {
-        public const string TAG = "DL-ENGINE";
+        public const string TAG = "CustomWebViewHandlerLog-ENGINE";
         public static void I(string m) => AndroidUtil.Log.Info(TAG, m);
         public static void E(string m) => AndroidUtil.Log.Error(TAG, m);
     }
@@ -194,7 +193,7 @@ namespace MortonPlazmer.Platforms.Android
             }
             catch (Exception ex)
             {
-                DL.E("Download error: " + ex);
+                CustomWebViewHandlerLog.E("Download error: " + ex);
                 throw;
             }
         }
@@ -282,6 +281,8 @@ namespace MortonPlazmer.Platforms.Android
 
             NotifyEngine.Init(wv.Context);
 
+            wv.SetBackgroundColor(AndroidGraphics.Color.Black);
+
             wv.SetDownloadListener(new DLListener(wv.Context));
         }
     }
@@ -339,7 +340,7 @@ namespace MortonPlazmer.Platforms.Android
             }
             catch (Exception ex)
             {
-                DL.E("Download failed: " + ex);
+                CustomWebViewHandlerLog.E("Download failed: " + ex);
 
 #if DEBUG
     AndroidWidget.Toast.MakeText(_ctx, ex.ToString(), ToastLength.Long).Show();

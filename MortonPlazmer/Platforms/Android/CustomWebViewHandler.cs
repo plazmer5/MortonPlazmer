@@ -7,6 +7,7 @@ using Android.Content.PM;
 using Android.Net;
 using Android.OS;
 using Android.Provider;
+using Android.Views;
 using Android.Webkit;
 using Android.Widget;
 using AndroidX.Core.App;
@@ -22,14 +23,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using AndroidEnvironment = Android.OS.Environment;
+using AndroidGraphics = Android.Graphics;
+using AndroidNet = Android.Net;
 using AndroidResource = Android.Resource;
 using AndroidUri = Android.Net.Uri;
 using AndroidUtil = Android.Util;
 using AndroidWebView = Android.Webkit.WebView;
 using AndroidWidget = Android.Widget;
 using JavaIO = Java.IO;
-using AndroidNet = Android.Net;
-using AndroidGraphics = Android.Graphics;
 
 namespace MortonPlazmer.Platforms.Android
 {
@@ -83,6 +84,11 @@ namespace MortonPlazmer.Platforms.Android
             Directory.CreateDirectory(Dir(ctx));
             File.WriteAllBytes(GetPath(ctx, url), data);
         }
+
+        internal static void OnAppStart(MainActivity mainActivity)
+        {
+            throw new NotImplementedException();
+        }
     }
 
     // =====================================================
@@ -101,8 +107,6 @@ namespace MortonPlazmer.Platforms.Android
             {
                 if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
                 {
-#pragma warning disable CA1416
-
                     var values = new ContentValues();
                     values.Put(MediaStore.IMediaColumns.DisplayName, name);
                     values.Put(MediaStore.IMediaColumns.MimeType, mime);
@@ -136,20 +140,17 @@ namespace MortonPlazmer.Platforms.Android
 
                     await File.WriteAllBytesAsync(file.AbsolutePath, data);
 
-                    var uri = AndroidX.Core.Content.FileProvider.GetUriForFile(
+                    return AndroidX.Core.Content.FileProvider.GetUriForFile(
                         ctx,
                         ctx.PackageName + ".fileprovider",
                         file);
-
-                    return uri;
                 }
             }
             catch (Exception ex)
             {
 #if DEBUG
-    AndroidUtil.Log.Error("StorageEngine", ex.ToString());
+            AndroidUtil.Log.Error("StorageEngine", ex.ToString());
 #endif
-
                 AndroidWidget.Toast.MakeText(
                     ctx,
                     "Ошибка загрузки файла",
@@ -278,10 +279,13 @@ namespace MortonPlazmer.Platforms.Android
             s.DisplayZoomControls = false;
 
             s.CacheMode = CacheModes.CacheElseNetwork;
+            wv.SetBackgroundColor(AndroidGraphics.Color.Black);
+
+            wv.SetWebViewClient(new WebViewClient());
+
+            wv.SetLayerType(LayerType.Hardware, null);
 
             NotifyEngine.Init(wv.Context);
-
-            wv.SetBackgroundColor(AndroidGraphics.Color.Black);
 
             wv.SetDownloadListener(new DLListener(wv.Context));
         }
@@ -296,16 +300,19 @@ namespace MortonPlazmer.Platforms.Android
 
         public DLListener(Context ctx) => _ctx = ctx;
 
-        public async void OnDownloadStart(
+        public void OnDownloadStart(
             string url,
-            string ua,
-            string cd,
-            string mime,
-            long len)
+            string userAgent,
+            string contentDisposition,
+            string mimeType,
+            long contentLength)
         {
             var activity = Platform.CurrentActivity;
 
-            // 🔴 ВАЖНО: проверка для Android 9
+            if (activity == null)
+                return;
+
+            // 🔴 Android 9 (и ниже)
             if (Build.VERSION.SdkInt < BuildVersionCodes.Q)
             {
                 if (ContextCompat.CheckSelfPermission(
@@ -318,36 +325,47 @@ namespace MortonPlazmer.Platforms.Android
                         new[] { Manifest.Permission.WriteExternalStorage },
                         1001);
 
-                    AndroidWidget.Toast.MakeText(
-                        activity,
-                        "Разрешите доступ к хранилищу",
-                        AndroidWidget.ToastLength.Long).Show();
-
-                    return; // ❗ остановить загрузку
+                    // ❗ ВАЖНО: ничего не делаем дальше
+                    return;
                 }
             }
 
-            try
+            // ✅ запускаем загрузку отдельно
+            _ = Task.Run(async () =>
             {
-                if (string.IsNullOrEmpty(mime))
-                    mime = "application/octet-stream";
+                try
+                {
+                    if (string.IsNullOrEmpty(mimeType))
+                        mimeType = "*/*";
 
-                string name = URLUtil.GuessFileName(url, cd, mime);
+                    string name = URLUtil.GuessFileName(
+                        url,
+                        contentDisposition,
+                        mimeType);
 
-                var uri = await DownloadEngine.Download(_ctx, url, mime, name);
+                    var uri = await DownloadEngine.Download(
+                        _ctx,
+                        url,
+                        mimeType,
+                        name);
 
-                NotifyEngine.ShowDone(_ctx, name, uri, mime);
-            }
-            catch (Exception ex)
-            {
-                CustomWebViewHandlerLog.E("Download failed: " + ex);
-
+                    NotifyEngine.ShowDone(_ctx, name, uri, mimeType);
+                }
+                catch (Exception ex)
+                {
 #if DEBUG
-    AndroidWidget.Toast.MakeText(_ctx, ex.ToString(), ToastLength.Long).Show();
+                    AndroidWidget.Toast.MakeText(
+                        _ctx,
+                        ex.ToString(),
+                        AndroidWidget.ToastLength.Long).Show();
 #else
-                AndroidWidget.Toast.MakeText(_ctx, "Ошибка загрузки", ToastLength.Long).Show();
+                    AndroidWidget.Toast.MakeText(
+                        _ctx,
+                        "Ошибка загрузки",
+                        AndroidWidget.ToastLength.Long).Show();
 #endif
-            }
+                }
+            });
         }
     }
 }
